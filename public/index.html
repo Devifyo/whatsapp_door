@@ -279,6 +279,19 @@
   </div>
 </div>
 
+<!-- Unlock Screen (Password) -->
+<div class="lock-screen" id="unlock-screen" style="display:none">
+  <div class="lock-card" style="max-width:360px;width:90%;text-align:center">
+    <div class="lock-icon">🔐</div>
+    <h2>Dashboard Locked</h2>
+    <p style="font-size:13px;color:#8696a0;margin-bottom:24px">Enter password to access this linked device.</p>
+    <input type="password" id="passcode-input" placeholder="Password…" onkeydown="if(event.key==='Enter')doLogin()"
+           style="width:100%;background:#2a3942;border:2px solid #3a4a54;border-radius:12px;padding:14px 16px;color:#e9edef;font-size:15px;outline:none;margin-bottom:10px;">
+    <button class="lock-btn" id="login-btn" onclick="doLogin()">Unlock</button>
+    <div class="lock-error" id="login-error"></div>
+  </div>
+</div>
+
 <div class="header" id="main-header-bar">
   <h1>📱 WhatsApp Monitor</h1>
   <div class="header-right">
@@ -438,6 +451,21 @@
       </label>
     </div>
 
+    <div class="sp-section">Security</div>
+
+    <div class="sp-item" style="flex-direction:column;align-items:stretch">
+      <div class="sp-info" style="margin-bottom:8px">
+        <div class="sp-name">Dashboard Password</div>
+        <div class="sp-desc">Require a password to access this dashboard from other devices.</div>
+      </div>
+      <div class="pc-input-group" id="pc-setup-group">
+        <input type="password" id="pc-current" placeholder="Current password (leave blank if none)" style="display:none">
+        <input type="password" id="pc-new" placeholder="New password">
+        <button class="pc-btn primary" id="pc-save-btn" onclick="savePasscode()">Save Password</button>
+        <div class="pc-msg" id="pc-msg"></div>
+      </div>
+    </div>
+
     <div class="sp-section">Account</div>
 
     <div class="sp-item" style="flex-direction:column;align-items:stretch;gap:8px">
@@ -501,11 +529,18 @@ function avatarColor(name) {
 }
 
 // ── Ticks ─────────────────────────────────────────────────────────────────────
-function buildTick(status) {
+function buildTick(m) {
+  const status = m.receipt_status || 'sent'
   if (appSettings.hide_delivery_ticks === 'true' && status === 'delivered') return ''
-  if (status === 'read')      return `<span class="tick read"      title="Seen at ${new Date().toLocaleTimeString()}">✓✓</span>`
-  if (status === 'delivered') return `<span class="tick delivered" title="Delivered">✓✓</span>`
-  return `<span class="tick sent" title="Sent">✓</span>`
+  if (status === 'read') {
+    const timeStr = m.read_at ? tsLong(m.read_at) : ''
+    const msg = timeStr ? 'Seen on ' + timeStr : 'Seen'
+    return `<span class="tick read" title="${msg}" onclick="alert('${msg}')" style="cursor:pointer">✓✓</span>`
+  }
+  if (status === 'delivered') {
+    return `<span class="tick delivered" title="Delivered" onclick="alert('Delivered')" style="cursor:pointer">✓✓</span>`
+  }
+  return `<span class="tick sent" title="Sent" onclick="alert('Sent')" style="cursor:pointer">✓</span>`
 }
 
 // ── Media ─────────────────────────────────────────────────────────────────────
@@ -549,6 +584,39 @@ async function saveSetting(key, value) {
   if (key === 'new_msg_alerts' && value) requestNotifPermission()
 }
 
+async function savePasscode() {
+  const current = document.getElementById('pc-current').value.trim()
+  const val = document.getElementById('pc-new').value.trim()
+  const btn = document.getElementById('pc-save-btn')
+  const msg = document.getElementById('pc-msg')
+  
+  if (!val && confirm('Leave password blank to remove it?') === false) return
+  
+  btn.disabled = true; msg.textContent = 'Saving…'; msg.className = 'pc-msg'
+  try {
+    const r = await fetch('/api/passcode/set', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPasscode: current, newPasscode: val })
+    })
+    const data = await r.json()
+    if (r.ok) {
+      msg.textContent = val ? 'Password saved.' : 'Password removed.'
+      msg.className = 'pc-msg success'
+      document.getElementById('pc-current').value = ''
+      document.getElementById('pc-new').value = ''
+      if (val) document.getElementById('pc-current').style.display = ''
+      else document.getElementById('pc-current').style.display = 'none'
+    } else {
+      msg.textContent = data.error || 'Failed to save'
+      msg.className = 'pc-msg error'
+    }
+  } catch(e) {
+    msg.textContent = 'Connection error'
+    msg.className = 'pc-msg error'
+  }
+  btn.disabled = false
+}
+
 function updateGhostBadge() {
   const active = appSettings.hide_online === 'true'
               || appSettings.hide_read_receipts === 'true'
@@ -556,9 +624,13 @@ function updateGhostBadge() {
   document.getElementById('ghost-badge').style.display = active ? '' : 'none'
 }
 
-function openSettings()  {
+async function openSettings()  {
   document.getElementById('settings-overlay').classList.add('open')
   document.getElementById('settings-panel').classList.add('open')
+  try {
+    const s = await fetch('/api/passcode/status').then(r=>r.json())
+    document.getElementById('pc-current').style.display = s.hasPasscode ? '' : 'none'
+  } catch(e) {}
 }
 function closeSettings() {
   document.getElementById('settings-overlay').classList.remove('open')
@@ -666,17 +738,24 @@ async function init() {
       isAuthenticated = true; hideLockScreen(); startPolling(); return
     }
 
-    // 2. WA connected = auto-login, no password needed
+    // 2. Not globally authenticated. Let's see if WA is connected.
     const status = await fetch('/api/status').then(r => r.json())
     if (status.connected) {
+      // Try auto-login. This will ONLY succeed if NO passcode is set, OR if it's a fresh scan.
       const qrRes  = await fetch('/api/qr-session', { method: 'POST' })
       const qrData = await qrRes.json().catch(() => ({}))
+      
       if (qrRes.ok) {
         isAuthenticated = true; hideLockScreen(); startPolling()
+        // If it was a fresh scan and NO passcode is set, nudge them!
         if (qrData.freshScan) {
           const ps = await fetch('/api/passcode/status').then(r => r.json()).catch(() => ({}))
           if (!ps.hasPasscode) showNudgeBanner()
         }
+        return
+      } else if (qrRes.status === 403) {
+        // A passcode is required
+        showUnlockScreen()
         return
       }
     }
@@ -689,7 +768,9 @@ async function init() {
 }
 
 function showLockScreen() {
-  document.getElementById('lock-screen').style.display     = 'flex'
+  const lockScreen = document.getElementById('lock-screen')
+  lockScreen.style.display = 'flex'
+  document.getElementById('unlock-screen').style.display   = 'none'
   document.getElementById('main-header-bar').style.display = 'none'
   document.getElementById('app-layout').style.display      = 'none'
   document.getElementById('qr-screen').style.display       = 'none'
@@ -697,9 +778,20 @@ function showLockScreen() {
   startQRPolling()
 }
 
+function showUnlockScreen() {
+  document.getElementById('lock-screen').style.display     = 'none'
+  document.getElementById('unlock-screen').style.display   = 'flex'
+  document.getElementById('main-header-bar').style.display = 'none'
+  document.getElementById('app-layout').style.display      = 'none'
+  document.getElementById('qr-screen').style.display       = 'none'
+  document.getElementById('btn-settings').style.display    = 'none'
+  stopQRPolling()
+}
+
 function hideLockScreen() {
   stopQRPolling()
   document.getElementById('lock-screen').style.display = 'none'
+  document.getElementById('unlock-screen').style.display = 'none'
   document.getElementById('main-header-bar').style.display = 'flex'
 }
 
@@ -730,9 +822,48 @@ async function pollLockQR() {
           const ps = await fetch('/api/passcode/status').then(r => r.json()).catch(() => ({}))
           if (!ps.hasPasscode) showNudgeBanner()
         }
+      } else if (r.status === 403) {
+        showUnlockScreen()
       }
     }
   } catch(e) {}
+}
+
+async function doLogin() {
+  const passcode = document.getElementById('passcode-input').value.trim()
+  const btn = document.getElementById('login-btn')
+  const err = document.getElementById('login-error')
+
+  if (!passcode) {
+    err.textContent = 'Enter password'
+    return
+  }
+
+  btn.disabled = true
+  btn.textContent = 'Unlocking…'
+  err.textContent = ''
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode })
+    })
+    const data = await res.json()
+    if (res.ok) {
+      isAuthenticated = true
+      document.getElementById('passcode-input').value = ''
+      hideLockScreen()
+      startPolling()
+    } else {
+      err.textContent = data.error || 'Failed to login'
+    }
+  } catch(e) {
+    err.textContent = 'Connection error'
+  } finally {
+    btn.disabled = false
+    btn.textContent = 'Unlock'
+  }
 }
 
 function showNudgeBanner() {
@@ -836,7 +967,7 @@ function renderChatList(chats) {
     // c.phone is populated by backend for both @s.whatsapp.net and @lid contacts
     const jidPhone = c.jid.endsWith('@s.whatsapp.net') ? c.jid.split('@')[0].split(':')[0] : null
     const phone    = c.phone || jidPhone
-    const dispName = c.name || phone || c.jid
+    const dispName = c.name || phone || (c.jid.endsWith('@lid') ? 'Hidden Number' : c.jid)
     // show phone under name only when it differs from the displayed name
     const showPhone = !isGroup && phone && dispName !== phone
     return `
@@ -853,6 +984,14 @@ function renderChatList(chats) {
   }).join('')
 }
 
+function formatSenderName(m) {
+  const s = m.sender_name || m.from_jid || ''
+  if (s.length > 10 && /\d+$/.test(s) && (m.from_jid || '').endsWith('@lid')) return 'Hidden Number'
+  // Special case for missing pushName on their own jid, fallback to JID but hide @lid
+  if (s.endsWith('@lid')) return 'Hidden Number'
+  return s
+}
+
 // ── Open Chat ─────────────────────────────────────────────────────────────────
 async function openChat(jid, name) {
   activeJid = jid
@@ -863,7 +1002,7 @@ async function openChat(jid, name) {
   document.getElementById('reply-bar').classList.add('visible')
   document.getElementById('main-avatar').textContent     = avatarLetter(name)
   document.getElementById('main-avatar').style.background = avatarColor(name)
-  document.getElementById('main-title').textContent      = name || jid.split('@')[0]
+  document.getElementById('main-title').textContent      = name || (jid.endsWith('@lid') ? 'Hidden Number' : jid.split('@')[0])
   renderChatList(allChats)
 
   const msgs = await fetch(`/api/messages/${encodeURIComponent(jid)}`).then(r => r.json())
@@ -884,19 +1023,20 @@ async function openChat(jid, name) {
     }
     const isMe = m.is_from_me
     const safeContent = (m.content || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')
-    const safeSender  = (m.sender_name || m.from_jid || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'")
+    const dispSender  = formatSenderName(m)
+    const safeSender  = dispSender.replace(/\\/g,'\\\\').replace(/'/g,"\\'")
     return `${sep}
       <div class="msg-wrap ${isMe?'me':'other'}">
         <button class="msg-reply-btn" title="Reply"
                 onclick="startReply('${m.id}','${safeContent}','${safeSender}')">↩</button>
         <div class="msg ${isMe?'me':'other'} ${m.is_deleted?'deleted':''}">
-          ${!isMe ? `<div class="sender-name">${m.sender_name || m.from_jid || ''}</div>` : ''}
+          ${!isMe ? `<div class="sender-name">${dispSender}</div>` : ''}
           ${buildMedia(m.media_url)}
           <div>${m.content || '<i style="color:#8696a0">Empty</i>'}</div>
           <div class="msg-meta">
             ${m.is_deleted ? `<span class="deleted-badge">DELETED</span>` : ''}
             <span title="${tsLong(m.timestamp)}">${tsFull(m.timestamp)}</span>
-            ${isMe ? buildTick(m.receipt_status || 'sent') : ''}
+            ${isMe ? buildTick(m) : ''}
           </div>
         </div>
       </div>`
@@ -917,8 +1057,8 @@ function renderDeletedPanel() {
   }
   el.innerHTML = allDeleted.map(m => `
     <div class="deleted-card">
-      <div class="dc-from">${m.sender_name || m.from_jid || 'Unknown'}</div>
-      <div class="dc-chat">Chat: ${m.jid.split('@')[0]}</div>
+      <div class="dc-from">${formatSenderName(m) || 'Unknown'}</div>
+      <div class="dc-chat">Chat: ${m.jid.endsWith('@lid') ? 'Hidden Number' : m.jid.split('@')[0]}</div>
       ${m.media_url ? `<div class="dc-media">${buildMedia(m.media_url)}</div>` : ''}
       <div class="dc-body">${m.content || '<i>No text</i>'}</div>
       <div class="dc-time">Sent: ${tsLong(m.timestamp)} &nbsp;|&nbsp; Deleted: ${tsLong(m.deleted_at)}</div>

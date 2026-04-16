@@ -328,19 +328,65 @@ app.post('/api/admin/impersonate/:userId', requireAdmin, (_req, res) => {
   res.json({ ok: true })
 })
 
-// ─── QR auto-session (WhatsApp connected = authenticated) ────────────────────
-app.post('/api/qr-session', (_req, res) => {
-  if (!isConnected) return res.status(400).json({ error: 'Not connected' })
-  const freshScan = qrAutoSessionAvailable
-  qrAutoSessionAvailable = false
+// ─── Passcode & Auth Endpoints ────────────────────────────────────────────────
+app.get('/api/passcode/status', (_req, res) => {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('passcode')
+  res.json({ hasPasscode: !!(row && row.value) })
+})
+
+app.post('/api/passcode/set', requireAuth, (req, res) => {
+  const { currentPasscode, newPasscode } = req.body
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('passcode')
+  const actualPasscode = row ? row.value : null
+  if (actualPasscode && currentPasscode !== actualPasscode) {
+    return res.status(403).json({ error: 'Incorrect current password' })
+  }
+  db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run('passcode', newPasscode || '')
+  res.json({ ok: true })
+})
+
+app.post('/api/login', (req, res) => {
+  const { passcode } = req.body
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('passcode')
+  const actualPasscode = row ? row.value : null
+  
+  if (actualPasscode && passcode !== actualPasscode) {
+    return res.status(403).json({ error: 'Incorrect password' })
+  }
+  
   const token = generateSessionToken()
   activeSessions.set(token, { expiry: Date.now() + SESSION_TTL, type: 'user' })
   setSessionCookie(res, token)
-  return res.json({ ok: true, freshScan })
+  res.json({ ok: true })
+})
+
+// QR scanning automatically grants a session to the scanning browser (if it's a fresh scan)
+app.post('/api/qr-session', (_req, res) => {
+  if (!isConnected) return res.status(400).json({ error: 'Not connected' })
+  
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('passcode')
+  const hasPasscode = !!(row && row.value)
+
+  // If a fresh scan happened, grant connection securely. 
+  // If NO passcode is set, anyone can freely create a session.
+  if (qrAutoSessionAvailable || !hasPasscode) {
+    const freshScan = qrAutoSessionAvailable
+    qrAutoSessionAvailable = false
+    const token = generateSessionToken()
+    activeSessions.set(token, { expiry: Date.now() + SESSION_TTL, type: 'user' })
+    setSessionCookie(res, token)
+    return res.json({ ok: true, freshScan })
+  }
+
+  // If not fresh scan AND a passcode exists, access denied via qr-session. They must use /api/login!
+  return res.status(403).json({ error: 'Passcode required' })
 })
 
 // ─── Protected API routes ─────────────────────────────────────────────────────
-app.get('/api/status', (_req, res) => res.json({ connected: isConnected, qr: currentQR }))
+app.get('/api/status', (_req, res) => {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get('passcode')
+  res.json({ connected: isConnected, qr: currentQR, hasPasscode: !!(row && row.value) })
+})
 app.get('/api/chats',         requireAuth, (_req, res) => res.json(stmt.getChats.all()))
 app.get('/api/deleted',       requireAuth, (_req, res) => res.json(stmt.getDeletedMsgs.all()))
 app.get('/api/messages/:jid', requireAuth, (req, res)  => res.json(stmt.getMessages.all(decodeURIComponent(req.params.jid))))
@@ -451,8 +497,15 @@ async function connectToWhatsApp() {
       if (!isLoggingOut) {
         const code  = lastDisconnect?.error?.output?.statusCode
         const retry = code !== DisconnectReason.loggedOut
-        console.log(`Connection closed (${code}) — ${retry ? 'reconnecting…' : 'logged out'}`)
-        if (retry) setTimeout(connectToWhatsApp, 3000)
+        console.log(`Connection closed (${code}) — ${retry ? 'reconnecting…' : 'logged out (cleaning up...)'}`)
+        
+        if (!retry) {
+          // If externally logged out, we must delete auth_info and restart the connection
+          // so a new QR code can be generated for the user!
+          try { rmSync('/data/auth_info', { recursive: true, force: true }) } catch(e) {}
+        }
+        
+        setTimeout(connectToWhatsApp, 3000)
       }
     }
     if (connection === 'open') {
