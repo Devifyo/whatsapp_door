@@ -196,21 +196,96 @@
   .toggle input:checked + .toggle-track { background: #00a884; }
   .toggle input:checked + .toggle-track::before { background: #fff; transform: translateX(20px); }
 
+  /* ── Credentials nudge banner ── */
+  .nudge-banner { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+                  background: #1f2c34; border: 1px solid #00a884; border-radius: 10px;
+                  padding: 12px 18px; display: flex; align-items: center; gap: 12px;
+                  z-index: 300; box-shadow: 0 4px 20px rgba(0,0,0,.5);
+                  max-width: 420px; width: calc(100% - 32px);
+                  animation: slideUp .3s ease; }
+  @keyframes slideUp { from { opacity:0; transform: translateX(-50%) translateY(20px); }
+                        to   { opacity:1; transform: translateX(-50%) translateY(0); } }
+  .nudge-banner p { font-size: 13px; color: #e9edef; flex: 1; line-height: 1.4; margin: 0; }
+  .nudge-banner p span { color: #00a884; font-weight: 600; }
+  .nudge-open  { background: #00a884; border: none; color: #fff; padding: 7px 14px;
+                 border-radius: 7px; cursor: pointer; font-size: 12px; font-weight: 600;
+                 white-space: nowrap; flex-shrink: 0; }
+  .nudge-close { background: none; border: none; color: #8696a0; font-size: 18px;
+                 cursor: pointer; padding: 0 2px; flex-shrink: 0; line-height: 1; }
+  .nudge-close:hover { color: #e9edef; }
+
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 5px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: #2a3942; border-radius: 99px; }
+
+  /* ── Passcode Lock Screen ── */
+  .lock-screen { position: fixed; inset: 0; background: #0a1628; z-index: 1000;
+                 display: flex; align-items: center; justify-content: center;
+                 flex-direction: column; gap: 24px; }
+  .lock-card { background: #111b21; border: 1px solid #2a3942; border-radius: 16px;
+               padding: 40px 36px; text-align: center; max-width: 380px; width: 90%;
+               box-shadow: 0 8px 32px rgba(0,0,0,.5); }
+  .lock-card .lock-icon { font-size: 56px; margin-bottom: 16px; }
+  .lock-card h2 { font-size: 22px; color: #e9edef; margin-bottom: 6px; font-weight: 600; }
+  .lock-card p { font-size: 13px; color: #8696a0; margin-bottom: 24px; line-height: 1.5; }
+  .lock-card input { width: 100%; background: #2a3942; border: 2px solid #3a4a54;
+                     border-radius: 12px; padding: 14px 16px; color: #e9edef;
+                     font-size: 15px; outline: none; transition: border-color .2s;
+                     margin-bottom: 10px; }
+  .lock-card input:focus { border-color: #00a884; }
+  .lock-card input::placeholder { color: #8696a0; }
+  .lock-btn { width: 100%; margin-top: 16px; padding: 14px; background: #00a884;
+              border: none; border-radius: 12px; color: #fff; font-size: 16px;
+              font-weight: 600; cursor: pointer; transition: background .2s; }
+  .lock-btn:hover { background: #02c099; }
+  .lock-btn:disabled { background: #2a3942; color: #8696a0; cursor: not-allowed; }
+  .lock-error { color: #ef4444; font-size: 13px; margin-top: 10px; min-height: 20px; }
+
+  /* ── Passcode Input Group (settings) ── */
+  .pc-input-group { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+  .pc-input-group input { background: #2a3942; border: 1px solid #3a4a54; border-radius: 8px;
+                          padding: 10px 14px; color: #e9edef; font-size: 14px; outline: none;
+                          transition: border-color .2s; }
+  .pc-input-group input:focus { border-color: #00a884; }
+  .pc-input-group input::placeholder { color: #8696a0; }
+  .pc-btn { padding: 10px 16px; border: none; border-radius: 8px; cursor: pointer;
+            font-size: 13px; font-weight: 600; transition: background .2s; }
+  .pc-btn.primary { background: #00a884; color: #fff; }
+  .pc-btn.primary:hover { background: #02c099; }
+  .pc-btn.danger { background: #ef4444; color: #fff; }
+  .pc-btn.danger:hover { background: #dc2626; }
+  .pc-msg { font-size: 12px; margin-top: 6px; min-height: 18px; }
+  .pc-msg.error { color: #ef4444; }
+  .pc-msg.success { color: #00a884; }
 </style>
 </head>
 <body>
 
-<div class="header">
+<!-- Lock Screen — QR scan only -->
+<div class="lock-screen" id="lock-screen" style="display:none">
+  <div class="lock-card" style="max-width:360px;width:90%;text-align:center">
+    <div class="lock-icon">📱</div>
+    <h2>WhatsApp Monitor</h2>
+    <p id="lock-qr-hint" style="margin-bottom:16px">Waiting for QR code…</p>
+    <div id="lock-qr-box"
+         style="margin:0 auto 14px;width:252px;height:252px;background:#fff;
+                border-radius:12px;display:flex;align-items:center;justify-content:center;overflow:hidden">
+      <span class="spin" style="font-size:40px;color:#333">⟳</span>
+    </div>
+    <p style="font-size:12px;color:#8696a0;line-height:1.6">
+      Open WhatsApp → Settings → Linked Devices → Link a Device
+    </p>
+  </div>
+</div>
+
+<div class="header" id="main-header-bar">
   <h1>📱 WhatsApp Monitor</h1>
   <div class="header-right">
     <span class="status-dot" id="dot"></span>
     <span class="status-text" id="status-text">Connecting…</span>
     <span class="ghost-badge" id="ghost-badge">👻 Ghost</span>
-    <button class="btn-settings" onclick="openSettings()">⚙️ Settings</button>
+    <button class="btn-settings" id="btn-settings" onclick="openSettings()" style="display:none">⚙️ Settings</button>
   </div>
 </div>
 
@@ -272,6 +347,13 @@
 <!-- Lightbox -->
 <div class="lightbox" id="lightbox" onclick="closeLightbox()">
   <img id="lightbox-img" src="" alt="">
+</div>
+
+<!-- Credentials nudge banner (shown after first QR scan if no password set) -->
+<div class="nudge-banner" id="nudge-banner" style="display:none">
+  <p>You're in! <span>Set a password</span> so you can access this dashboard from other devices.</p>
+  <button class="nudge-open" onclick="closeBanner();openSettings()">Set Password</button>
+  <button class="nudge-close" onclick="closeBanner()" title="Dismiss">✕</button>
 </div>
 
 <!-- Settings Overlay + Panel -->
@@ -382,6 +464,7 @@ let activeJid    = null
 let allChats     = []
 let allDeleted   = []
 let appSettings  = {}
+let isAuthenticated = false
 let lastSeenMsgAt = {}   // jid → last_msg_at seen, for new-message detection
 
 // ── Timestamps ────────────────────────────────────────────────────────────────
@@ -571,27 +654,146 @@ function maybeNotify(chat) {
   }
 }
 
+// ── Auth ──────────────────────────────────────────────────────────────────────
+let qrPollTimer = null
+
+// Entry point — called on page load
+async function init() {
+  try {
+    // 1. Check if current session cookie is valid
+    const sessTest = await fetch('/api/chats')
+    if (sessTest.ok) {
+      isAuthenticated = true; hideLockScreen(); startPolling(); return
+    }
+
+    // 2. WA connected = auto-login, no password needed
+    const status = await fetch('/api/status').then(r => r.json())
+    if (status.connected) {
+      const qrRes  = await fetch('/api/qr-session', { method: 'POST' })
+      const qrData = await qrRes.json().catch(() => ({}))
+      if (qrRes.ok) {
+        isAuthenticated = true; hideLockScreen(); startPolling()
+        if (qrData.freshScan) {
+          const ps = await fetch('/api/passcode/status').then(r => r.json()).catch(() => ({}))
+          if (!ps.hasPasscode) showNudgeBanner()
+        }
+        return
+      }
+    }
+
+    // 3. WA disconnected — show QR to scan
+    showLockScreen()
+  } catch(e) {
+    setTimeout(init, 2000)
+  }
+}
+
+function showLockScreen() {
+  document.getElementById('lock-screen').style.display     = 'flex'
+  document.getElementById('main-header-bar').style.display = 'none'
+  document.getElementById('app-layout').style.display      = 'none'
+  document.getElementById('qr-screen').style.display       = 'none'
+  document.getElementById('btn-settings').style.display    = 'none'
+  startQRPolling()
+}
+
+function hideLockScreen() {
+  stopQRPolling()
+  document.getElementById('lock-screen').style.display = 'none'
+  document.getElementById('main-header-bar').style.display = 'flex'
+}
+
+// QR polling on lock screen
+function startQRPolling() {
+  if (qrPollTimer) return
+  pollLockQR()
+  qrPollTimer = setInterval(pollLockQR, 2000)
+}
+
+function stopQRPolling() {
+  if (qrPollTimer) { clearInterval(qrPollTimer); qrPollTimer = null }
+}
+
+async function pollLockQR() {
+  try {
+    const s = await fetch('/api/status').then(r => r.json())
+    updateLockQRDisplay(s.qr, s.connected)
+    if (s.connected) {
+      stopQRPolling()
+      const r    = await fetch('/api/qr-session', { method: 'POST' })
+      const data = await r.json()
+      if (r.ok) {
+        isAuthenticated = true
+        hideLockScreen()
+        startPolling()
+        if (data.freshScan) {
+          const ps = await fetch('/api/passcode/status').then(r => r.json()).catch(() => ({}))
+          if (!ps.hasPasscode) showNudgeBanner()
+        }
+      }
+    }
+  } catch(e) {}
+}
+
+function showNudgeBanner() {
+  document.getElementById('nudge-banner').style.display = 'flex'
+  // Auto-dismiss after 30s
+  setTimeout(closeBanner, 30000)
+}
+
+function closeBanner() {
+  document.getElementById('nudge-banner').style.display = 'none'
+}
+
+function updateLockQRDisplay(qrData, connected) {
+  const box  = document.getElementById('lock-qr-box')
+  const hint = document.getElementById('lock-qr-hint')
+  if (!box) return
+  if (connected) {
+    box.innerHTML = '<div style="font-size:56px;color:#00a884">✓</div>'
+    if (hint) hint.textContent = 'WhatsApp connected!'
+  } else if (qrData) {
+    box.innerHTML = `<img src="${qrData}" style="width:240px;height:240px;display:block">`
+    if (hint) hint.textContent = 'Scan with WhatsApp on your phone'
+  } else {
+    box.innerHTML = '<span class="spin" style="font-size:40px;color:#333">⟳</span>'
+    if (hint) hint.textContent = 'Waiting for QR code…'
+  }
+}
+
+
 // ── Poll Status & QR ──────────────────────────────────────────────────────────
 let firstLoad = true
+let pollTimer = null
+
+function startPolling() {
+  if (pollTimer) return
+  pollStatus()
+  pollTimer = setInterval(pollStatus, 2000)
+}
+
 async function pollStatus() {
+  if (!isAuthenticated) return
   try {
-    const r = await fetch('/api/status').then(r => r.json())
+    const r = await fetch('/api/status')
+    const data = await r.json()
     const dot  = document.getElementById('dot')
     const text = document.getElementById('status-text')
-    if (r.connected) {
+    if (data.connected) {
       dot.className    = 'status-dot connected'
       text.textContent = 'Connected'
+      document.getElementById('btn-settings').style.display = ''
       document.getElementById('qr-screen').style.display  = 'none'
       document.getElementById('app-layout').style.display = 'flex'
       await loadChats()
       loadDeleted()
       if (firstLoad) { loadSettings(); firstLoad = false }
-    } else if (r.qr) {
+    } else if (data.qr) {
       dot.className    = 'status-dot'
       text.textContent = 'Scan QR'
       document.getElementById('app-layout').style.display = 'none'
       document.getElementById('qr-screen').style.display  = 'flex'
-      document.getElementById('qr-container').innerHTML = `<img src="${r.qr}" alt="QR Code">`
+      document.getElementById('qr-container').innerHTML = `<img src="${data.qr}" alt="QR Code">`
     } else {
       dot.className    = 'status-dot'
       text.textContent = 'Connecting…'
@@ -600,12 +802,20 @@ async function pollStatus() {
     }
   } catch(e) {}
 }
-setInterval(pollStatus, 2000)
-pollStatus()
+
+// Start
+init()
 
 // ── Chats ─────────────────────────────────────────────────────────────────────
 async function loadChats() {
-  const fresh = await fetch('/api/chats').then(r => r.json())
+  const res = await fetch('/api/chats')
+  if (res.status === 401) {
+    isAuthenticated = false
+    clearInterval(pollTimer); pollTimer = null
+    showLockScreen()
+    return
+  }
+  const fresh = await res.json()
   // Detect new messages for notifications
   for (const chat of fresh) {
     if (!firstLoad) maybeNotify(chat)
@@ -621,17 +831,26 @@ function renderChatList(chats) {
     el.innerHTML = '<div style="padding:20px;color:#8696a0;font-size:13px;text-align:center">No chats yet</div>'
     return
   }
-  el.innerHTML = chats.map(c => `
+  el.innerHTML = chats.map(c => {
+    const isGroup  = c.jid.endsWith('@g.us')
+    // c.phone is populated by backend for both @s.whatsapp.net and @lid contacts
+    const jidPhone = c.jid.endsWith('@s.whatsapp.net') ? c.jid.split('@')[0].split(':')[0] : null
+    const phone    = c.phone || jidPhone
+    const dispName = c.name || phone || c.jid
+    // show phone under name only when it differs from the displayed name
+    const showPhone = !isGroup && phone && dispName !== phone
+    return `
     <div class="chat-item ${activeJid===c.jid?'active':''}"
-         onclick="openChat('${c.jid}','${(c.name||'').replace(/'/g,"\\'")}')">
-      <div class="avatar" style="background:${avatarColor(c.name)}">${avatarLetter(c.name)}</div>
+         onclick="openChat('${c.jid}','${dispName.replace(/'/g,"\\'")}')">
+      <div class="avatar" style="background:${avatarColor(dispName)}">${avatarLetter(dispName)}</div>
       <div class="chat-info">
-        <div class="chat-name">${c.name || c.jid.split('@')[0]}</div>
+        <div class="chat-name">${dispName}</div>
+        ${showPhone ? `<div style="font-size:11px;color:#8696a0;margin-bottom:1px">+${phone}</div>` : ''}
         <div class="chat-preview">${c.last_msg || ''}</div>
       </div>
-      <div style="font-size:11px;color:#8696a0;flex-shrink:0">${tsShort(c.last_msg_at)}</div>
-    </div>
-  `).join('')
+      <div style="font-size:11px;color:#8696a0;flex-shrink:0;margin-left:8px">${tsShort(c.last_msg_at)}</div>
+    </div>`
+  }).join('')
 }
 
 // ── Open Chat ─────────────────────────────────────────────────────────────────

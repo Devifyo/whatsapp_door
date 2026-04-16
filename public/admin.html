@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — WhatsApp Monitor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0a1628; color: #e9edef; min-height: 100vh;
+         display: flex; flex-direction: column; }
+
+  /* ── Header ── */
+  .header { background: #1f2c34; padding: 14px 24px; display: flex;
+            align-items: center; justify-content: space-between;
+            border-bottom: 1px solid #2a3942; }
+  .header h1 { font-size: 17px; color: #00a884; font-weight: 600; }
+  .header-actions { display: flex; gap: 10px; align-items: center; }
+  .btn { padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600;
+         cursor: pointer; border: none; transition: background .2s; }
+  .btn-ghost { background: none; border: 1px solid #2a3942; color: #8696a0; }
+  .btn-ghost:hover { border-color: #00a884; color: #00a884; }
+  .btn-danger { background: #ef4444; color: #fff; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-primary { background: #00a884; color: #fff; }
+  .btn-primary:hover { background: #02c099; }
+
+  /* ── Login page ── */
+  .login-wrap { flex: 1; display: flex; align-items: center; justify-content: center; }
+  .login-card { background: #111b21; border: 1px solid #2a3942; border-radius: 16px;
+                padding: 40px 36px; max-width: 380px; width: 90%;
+                box-shadow: 0 8px 32px rgba(0,0,0,.5); text-align: center; }
+  .login-card .icon { font-size: 52px; margin-bottom: 16px; }
+  .login-card h2  { font-size: 22px; margin-bottom: 8px; }
+  .login-card p   { font-size: 13px; color: #8696a0; margin-bottom: 28px; }
+  .login-card input { width: 100%; background: #2a3942; border: 2px solid #3a4a54;
+                      border-radius: 10px; padding: 12px 14px; color: #e9edef;
+                      font-size: 14px; outline: none; transition: border-color .2s;
+                      margin-bottom: 10px; display: block; }
+  .login-card input:focus { border-color: #00a884; }
+  .login-card input::placeholder { color: #8696a0; }
+  .login-btn { width: 100%; margin-top: 8px; padding: 13px; background: #00a884;
+               border: none; border-radius: 10px; color: #fff; font-size: 15px;
+               font-weight: 600; cursor: pointer; transition: background .2s; }
+  .login-btn:hover { background: #02c099; }
+  .login-btn:disabled { background: #2a3942; color: #8696a0; cursor: not-allowed; }
+  .login-error { color: #ef4444; font-size: 13px; margin-top: 10px; min-height: 20px; }
+
+  /* ── Dashboard ── */
+  .content { flex: 1; padding: 28px 24px; max-width: 900px; margin: 0 auto; width: 100%; }
+  .section-title { font-size: 12px; font-weight: 700; color: #00a884;
+                   text-transform: uppercase; letter-spacing: .8px; margin-bottom: 14px; }
+
+  /* ── Users table ── */
+  .users-table { width: 100%; border-collapse: collapse; background: #111b21;
+                 border-radius: 12px; overflow: hidden; border: 1px solid #2a3942; }
+  .users-table th { background: #1f2c34; padding: 12px 16px; text-align: left;
+                    font-size: 11px; font-weight: 700; color: #8696a0;
+                    text-transform: uppercase; letter-spacing: .5px; border-bottom: 1px solid #2a3942; }
+  .users-table td { padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #1f2c34; }
+  .users-table tr:last-child td { border-bottom: none; }
+  .users-table tr:hover td { background: #1a2530; }
+  .status-pill { display: inline-flex; align-items: center; gap: 5px;
+                 padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 600; }
+  .status-pill.connected    { background: rgba(0,168,132,.15); color: #00a884; }
+  .status-pill.disconnected { background: rgba(239,68,68,.1);  color: #ef4444; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  .empty-row td { text-align: center; color: #8696a0; padding: 32px; }
+</style>
+</head>
+<body>
+
+<!-- ── Login page ── -->
+<div id="page-login" class="login-wrap">
+  <div class="login-card">
+    <div class="icon">🛡️</div>
+    <h2>Admin Login</h2>
+    <p>Sign in to manage connected WhatsApp accounts</p>
+    <input type="email"    id="admin-email"    placeholder="Email address"
+           onkeydown="if(event.key==='Enter')document.getElementById('admin-pwd').focus()">
+    <input type="password" id="admin-pwd"      placeholder="Password"
+           onkeydown="if(event.key==='Enter')doAdminLogin()">
+    <div class="login-error" id="admin-error"></div>
+    <button class="login-btn" id="admin-login-btn" onclick="doAdminLogin()">Sign In</button>
+  </div>
+</div>
+
+<!-- ── Dashboard ── -->
+<div id="page-dashboard" style="display:none; flex-direction:column; flex:1">
+  <div class="header">
+    <h1>🛡️ Admin — WhatsApp Monitor</h1>
+    <div class="header-actions">
+      <button class="btn btn-ghost" onclick="window.location='/'">← Back to Dashboard</button>
+      <button class="btn btn-danger" onclick="doAdminLogout()">Logout</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div class="section-title">Connected Accounts</div>
+    <table class="users-table">
+      <thead>
+        <tr>
+          <th>Phone</th>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="users-tbody">
+        <tr class="empty-row"><td colspan="4">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+async function checkAdminSession() {
+  const r = await fetch('/api/admin/status').catch(() => null)
+  if (r?.ok) {
+    showDashboard()
+  }
+}
+
+async function doAdminLogin() {
+  const email = document.getElementById('admin-email').value.trim()
+  const pwd   = document.getElementById('admin-pwd').value
+  const btn   = document.getElementById('admin-login-btn')
+  const err   = document.getElementById('admin-error')
+  if (!email || !pwd) { err.textContent = 'Enter email and password'; return }
+
+  btn.disabled = true; btn.textContent = 'Signing in…'; err.textContent = ''
+  try {
+    const r = await fetch('/api/admin/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pwd }),
+    })
+    const data = await r.json()
+    if (r.ok) {
+      showDashboard()
+    } else {
+      err.textContent = data.error || 'Invalid credentials'
+    }
+  } catch(e) {
+    err.textContent = 'Connection error'
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign In'
+  }
+}
+
+async function doAdminLogout() {
+  // Just redirect to login — the session will expire naturally
+  document.getElementById('page-dashboard').style.display = 'none'
+  document.getElementById('page-login').style.display     = 'flex'
+  document.getElementById('admin-email').value = ''
+  document.getElementById('admin-pwd').value   = ''
+  document.getElementById('admin-error').textContent = ''
+}
+
+function showDashboard() {
+  document.getElementById('page-login').style.display     = 'none'
+  document.getElementById('page-dashboard').style.display = 'flex'
+  loadUsers()
+}
+
+async function loadUsers() {
+  const tbody = document.getElementById('users-tbody')
+  try {
+    const r     = await fetch('/api/admin/users')
+    if (!r.ok) { showLoginPage(); return }
+    const users = await r.json()
+    if (!users.length) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="4">No accounts linked yet</td></tr>'
+      return
+    }
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td><strong>${u.phone}</strong></td>
+        <td>${u.name}</td>
+        <td>
+          <span class="status-pill ${u.connected ? 'connected' : 'disconnected'}">
+            <span class="dot"></span>
+            ${u.connected ? 'Connected' : 'Disconnected'}
+          </span>
+        </td>
+        <td>
+          <button class="btn btn-primary" onclick="impersonate('${u.id}')"
+                  ${!u.connected ? 'disabled style="opacity:.4;cursor:not-allowed"' : ''}>
+            View Dashboard
+          </button>
+        </td>
+      </tr>
+    `).join('')
+  } catch(e) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="4">Error loading accounts</td></tr>'
+  }
+}
+
+async function impersonate(userId) {
+  const r = await fetch(`/api/admin/impersonate/${userId}`, { method: 'POST' })
+  if (r.ok) {
+    window.location.href = '/'
+  }
+}
+
+// Check if already logged in as admin
+checkAdminSession()
+</script>
+</body>
+</html>

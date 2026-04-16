@@ -14,6 +14,7 @@ import { createServer } from 'http'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
+import crypto from 'crypto'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const logger    = pino({ level: 'silent' })
@@ -61,6 +62,7 @@ db.exec(`
 for (const sql of [
   `ALTER TABLE messages ADD COLUMN receipt_status TEXT DEFAULT 'sent'`,
   `ALTER TABLE messages ADD COLUMN read_at INTEGER`,
+  `ALTER TABLE chats ADD COLUMN phone TEXT`,
 ]) { try { db.exec(sql) } catch (_) {} }
 
 // Default settings (INSERT OR IGNORE = don't overwrite user changes)
@@ -103,13 +105,17 @@ const stmt = {
   getMessages:   db.prepare(`SELECT * FROM messages WHERE jid = ? ORDER BY timestamp DESC LIMIT 200`),
   getChats:      db.prepare(`SELECT * FROM chats ORDER BY last_msg_at DESC`),
   upsertChat:    db.prepare(`
-    INSERT INTO chats (jid, name, last_msg, last_msg_at)
-      VALUES (@jid, @name, @last_msg, @last_msg_at)
+    INSERT INTO chats (jid, name, phone, last_msg, last_msg_at)
+      VALUES (@jid, @name, @phone, @last_msg, @last_msg_at)
     ON CONFLICT(jid) DO UPDATE SET
       name        = COALESCE(@name, name),
+      phone       = COALESCE(@phone, phone),
       last_msg    = @last_msg,
       last_msg_at = @last_msg_at
   `),
+  updateChatPhone: db.prepare(
+    `UPDATE chats SET phone = @phone WHERE jid = @jid AND phone IS NULL`
+  ),
   getDeletedMsgs: db.prepare(`SELECT * FROM messages WHERE is_deleted = 1 ORDER BY deleted_at DESC LIMIT 100`),
   searchMsgs:    db.prepare(`SELECT * FROM messages WHERE content LIKE ? ORDER BY timestamp DESC LIMIT 100`),
   getAllSettings: db.prepare(`SELECT key, value FROM settings`),
@@ -118,6 +124,9 @@ const stmt = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getJidName(jid) { return jid?.split('@')[0] || jid }
+function phoneFromJid(jid) {
+  return jid?.endsWith('@s.whatsapp.net') ? jid.split('@')[0].split(':')[0] : null
+}
 
 // Map Baileys msg.status → receipt_status string
 // 0=ERROR 1=PENDING 2=SERVER_ACK 3=DELIVERY_ACK 4=READ 5=PLAYED
@@ -219,33 +228,143 @@ app.use(express.json())
 app.use(express.static(join(__dirname, 'public')))
 app.use('/media', express.static(MEDIA_DIR))
 
-let currentQR   = null
-let isConnected = false
-let currentSock = null
+let currentQR               = null
+let isConnected             = false
+let currentSock             = null
+let isLoggingOut            = false
+let qrAutoSessionAvailable  = false  // one-time flag: true only immediately after a QR scan
 
-app.get('/api/status',        (_req, res) => res.json({ connected: isConnected, qr: currentQR }))
-app.get('/api/chats',         (_req, res) => res.json(stmt.getChats.all()))
-app.get('/api/deleted',       (_req, res) => res.json(stmt.getDeletedMsgs.all()))
-app.get('/api/messages/:jid', (req, res)  => res.json(stmt.getMessages.all(decodeURIComponent(req.params.jid))))
-app.get('/api/search', (req, res) => {
+// ─── Session helpers ──────────────────────────────────────────────────────────
+// activeSessions: token → { expiry, type: 'user' | 'admin' }
+const activeSessions = new Map()
+const SESSION_TTL    = 7 * 24 * 60 * 60 * 1000  // 7 days
+
+function generateSessionToken() {
+  return crypto.randomBytes(32).toString('hex')
+}
+
+function cleanExpiredSessions() {
+  const now = Date.now()
+  for (const [token, sess] of activeSessions) {
+    if (now > sess.expiry) activeSessions.delete(token)
+  }
+}
+
+function getSessionToken(req) {
+  const cookies = req.headers.cookie || ''
+  const match = cookies.match(/(?:^|;\s*)wam_session=([^;]+)/)
+  return match ? match[1] : null
+}
+
+function setSessionCookie(res, token) {
+  res.setHeader('Set-Cookie',
+    `wam_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL / 1000}`)
+}
+
+// ─── Auth middleware ──────────────────────────────────────────────────────────
+function requireAuth(req, res, next) {
+  const token = getSessionToken(req)
+  if (!token) return res.status(401).json({ error: 'Authentication required' })
+  cleanExpiredSessions()
+  const sess = activeSessions.get(token)
+  if (!sess || Date.now() > sess.expiry) {
+    activeSessions.delete(token)
+    return res.status(401).json({ error: 'Session expired' })
+  }
+  next()
+}
+
+function requireAdmin(req, res, next) {
+  const token = getSessionToken(req)
+  if (!token) return res.status(401).json({ error: 'Not authenticated' })
+  cleanExpiredSessions()
+  const sess = activeSessions.get(token)
+  if (!sess || Date.now() > sess.expiry || sess.type !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' })
+  }
+  next()
+}
+
+// ─── Admin credentials (hardcoded) ───────────────────────────────────────────
+const ADMIN_EMAIL    = 'admin@admin.com'
+const ADMIN_PASSWORD = 'pass@admin'
+
+// ─── Admin routes ─────────────────────────────────────────────────────────────
+app.get('/admin-login', (_req, res) =>
+  res.sendFile(join(__dirname, 'public', 'admin.html'))
+)
+
+app.post('/api/admin/login', (req, res) => {
+  const { email, password } = req.body
+  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+    return res.status(403).json({ error: 'Invalid credentials' })
+  }
+  const token = generateSessionToken()
+  activeSessions.set(token, { expiry: Date.now() + SESSION_TTL, type: 'admin' })
+  setSessionCookie(res, token)
+  res.json({ ok: true })
+})
+
+app.get('/api/admin/status', requireAdmin, (_req, res) => {
+  res.json({ ok: true })
+})
+
+app.get('/api/admin/users', requireAdmin, (_req, res) => {
+  const phone = currentSock?.user?.id?.split('@')[0]?.split(':')[0] || null
+  const name  = currentSock?.user?.name || null
+  res.json([{
+    id:        'default',
+    phone:     phone || 'Not linked',
+    name:      name  || '—',
+    connected: isConnected,
+  }])
+})
+
+app.post('/api/admin/impersonate/:userId', requireAdmin, (_req, res) => {
+  // Grant a user session so admin can view the dashboard
+  const token = generateSessionToken()
+  activeSessions.set(token, { expiry: Date.now() + SESSION_TTL, type: 'user' })
+  setSessionCookie(res, token)
+  res.json({ ok: true })
+})
+
+// ─── QR auto-session (WhatsApp connected = authenticated) ────────────────────
+app.post('/api/qr-session', (_req, res) => {
+  if (!isConnected) return res.status(400).json({ error: 'Not connected' })
+  const freshScan = qrAutoSessionAvailable
+  qrAutoSessionAvailable = false
+  const token = generateSessionToken()
+  activeSessions.set(token, { expiry: Date.now() + SESSION_TTL, type: 'user' })
+  setSessionCookie(res, token)
+  return res.json({ ok: true, freshScan })
+})
+
+// ─── Protected API routes ─────────────────────────────────────────────────────
+app.get('/api/status', (_req, res) => res.json({ connected: isConnected, qr: currentQR }))
+app.get('/api/chats',         requireAuth, (_req, res) => res.json(stmt.getChats.all()))
+app.get('/api/deleted',       requireAuth, (_req, res) => res.json(stmt.getDeletedMsgs.all()))
+app.get('/api/messages/:jid', requireAuth, (req, res)  => res.json(stmt.getMessages.all(decodeURIComponent(req.params.jid))))
+app.get('/api/search', requireAuth, (req, res) => {
   const q = req.query.q ? `%${req.query.q}%` : '%%'
   res.json(stmt.searchMsgs.all(q))
 })
 
 // ── Settings API ──────────────────────────────────────────────────────────────
-app.get('/api/settings', (_req, res) => {
+app.get('/api/settings', requireAuth, (_req, res) => {
   const settings = { ...SETTING_DEFAULTS }
-  for (const { key, value } of stmt.getAllSettings.all()) settings[key] = value
+  for (const { key, value } of stmt.getAllSettings.all()) {
+    settings[key] = value
+  }
   res.json(settings)
 })
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', requireAuth, (req, res) => {
   for (const [key, value] of Object.entries(req.body)) {
     if (key in SETTING_DEFAULTS) stmt.setSetting.run(key, String(value))
   }
   res.json({ ok: true })
 })
 
-app.post('/api/send', async (req, res) => {
+app.post('/api/send', requireAuth, async (req, res) => {
   const { jid, text, quotedId } = req.body
   if (!currentSock || !isConnected) return res.status(503).json({ error: 'Not connected' })
   if (!jid || !text?.trim()) return res.status(400).json({ error: 'Missing jid or text' })
@@ -273,7 +392,7 @@ app.post('/api/send', async (req, res) => {
         receipt_status: 'sent',
         raw_data:       JSON.stringify(sent),
       })
-      stmt.upsertChat.run({ jid, name: null, last_msg: text.trim(), last_msg_at: ts })
+      stmt.upsertChat.run({ jid, name: null, phone: phoneFromJid(jid), last_msg: text.trim(), last_msg_at: ts })
     }
 
     res.json({ ok: true })
@@ -282,14 +401,17 @@ app.post('/api/send', async (req, res) => {
   }
 })
 
-app.post('/api/logout', async (_req, res) => {
+app.post('/api/logout', requireAuth, async (_req, res) => {
+  isLoggingOut = true
   try {
     if (currentSock) await currentSock.logout().catch(() => {})
-    currentSock  = null
-    isConnected  = false
+    currentSock = null
+    isConnected = false
     rmSync('/data/auth_info', { recursive: true, force: true })
   } catch (_) {}
   res.json({ ok: true })
+  // Restart fresh after cleanup — will show QR since auth files are gone
+  setTimeout(() => { isLoggingOut = false; connectToWhatsApp().catch(console.error) }, 2000)
 })
 
 createServer(app).listen(process.env.PORT || 3000, () =>
@@ -324,14 +446,18 @@ async function connectToWhatsApp() {
     }
     if (connection === 'close') {
       isConnected = false
+      qrAutoSessionAvailable = false
       clearInterval(presenceTimer)
-      const code  = lastDisconnect?.error?.output?.statusCode
-      const retry = code !== DisconnectReason.loggedOut
-      console.log(`Connection closed (${code}) — ${retry ? 'reconnecting…' : 'logged out'}`)
-      if (retry) setTimeout(connectToWhatsApp, 3000)
+      if (!isLoggingOut) {
+        const code  = lastDisconnect?.error?.output?.statusCode
+        const retry = code !== DisconnectReason.loggedOut
+        console.log(`Connection closed (${code}) — ${retry ? 'reconnecting…' : 'logged out'}`)
+        if (retry) setTimeout(connectToWhatsApp, 3000)
+      }
     }
     if (connection === 'open') {
       isConnected = true
+      if (currentQR !== null) qrAutoSessionAvailable = true  // fresh QR scan — one browser gets in
       currentQR   = null
       currentSock = sock
       console.log('🟢 WhatsApp connected!')
@@ -377,6 +503,7 @@ async function connectToWhatsApp() {
         jid,
         // Only use pushName from incoming msgs — fromMe pushName is YOUR own name
         name:        msg.key.fromMe ? null : (msg.pushName || null),
+        phone:       phoneFromJid(jid),
         last_msg:    content,
         last_msg_at: ts,
       })
@@ -408,6 +535,24 @@ async function connectToWhatsApp() {
           read_at: update.status >= 4 ? Math.floor(Date.now() / 1000) : null,
           id:      key.id,
         })
+      }
+    }
+  })
+
+  // ── Contact phone sync ─────────────────────────────────────────────────────
+  // Baileys fires this on initial sync and whenever contacts change.
+  // contacts with @s.whatsapp.net IDs carry real phone numbers; their `lid`
+  // field gives the matching @lid JID so we can fill in phone for both rows.
+  sock.ev.on('contacts.upsert', (contacts) => {
+    for (const contact of contacts) {
+      if (!contact.id) continue
+      const phone = phoneFromJid(contact.id)
+      if (!phone) continue
+      // Update the @s.whatsapp.net chat row
+      stmt.updateChatPhone.run({ phone, jid: contact.id })
+      // Update the matching @lid chat row (if Baileys gave us the mapping)
+      if (contact.lid) {
+        stmt.updateChatPhone.run({ phone, jid: contact.lid })
       }
     }
   })
