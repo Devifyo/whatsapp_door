@@ -1,0 +1,14 @@
+services:
+  whatsapp-monitor:
+    build: .
+    container_name: whatsapp-monitor
+    restart: unless-stopped
+    ports:
+      - "3000:3000"     # Change left side to expose on different host port e.g. "8080:3000"
+    volumes:
+      - ./data:/data    # Auth info & SQLite DB persisted here
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+    # Optional: run behind nginx reverse proxy instead of exposing port directly
+    # Remove ports above and use a shared network with nginx instead

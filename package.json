@@ -1,0 +1,19 @@
+{
+  "name": "whatsapp-monitor",
+  "version": "1.0.0",
+  "description": "WhatsApp monitor with deleted message recovery and ghost mode",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "better-sqlite3": "^9.4.3",
+    "express": "^4.19.2",
+    "pino": "^9.2.0",
+    "qrcode": "^1.5.3",
+    "@hapi/boom": "^10.0.1",
+    "link-preview-js": "^3.0.5"
+  }
+}

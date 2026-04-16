@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WhatsApp Monitor</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0a1628; color: #e9edef; height: 100vh; display: flex; flex-direction: column; }
+
+  /* ── Header ── */
+  .header { background: #1f2c34; padding: 14px 20px; display: flex;
+            align-items: center; justify-content: space-between; border-bottom: 1px solid #2a3942;
+            flex-shrink: 0; }
+  .header h1 { font-size: 18px; color: #00a884; font-weight: 600; }
+  .header-right { display: flex; align-items: center; gap: 10px; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ef4444;
+                display: inline-block; margin-right: 6px; transition: background .3s; }
+  .status-dot.connected { background: #00a884; }
+  .status-text { font-size: 13px; color: #8696a0; }
+  .ghost-badge { background: #2a3942; color: #8696a0; font-size: 10px;
+                 padding: 2px 8px; border-radius: 99px; }
+  .btn-settings { background: none; border: 1px solid #2a3942; color: #8696a0;
+                  padding: 6px 12px; border-radius: 8px; cursor: pointer; font-size: 13px;
+                  transition: all .2s; }
+  .btn-settings:hover { border-color: #00a884; color: #00a884; }
+
+  /* ── Layout ── */
+  .layout { display: flex; flex: 1; overflow: hidden; }
+
+  /* ── Sidebar ── */
+  .sidebar { width: 320px; background: #111b21; border-right: 1px solid #2a3942;
+             display: flex; flex-direction: column; flex-shrink: 0; }
+  .sidebar-tabs { display: flex; border-bottom: 1px solid #2a3942; }
+  .tab-btn { flex: 1; padding: 12px 8px; background: none; border: none; color: #8696a0;
+             font-size: 12px; font-weight: 600; cursor: pointer; text-transform: uppercase;
+             letter-spacing: .5px; border-bottom: 2px solid transparent; transition: all .2s; }
+  .tab-btn.active { color: #00a884; border-bottom-color: #00a884; }
+  .tab-btn:hover { color: #e9edef; }
+  .search-box { padding: 10px; background: #111b21; }
+  .search-box input { width: 100%; background: #2a3942; border: none; border-radius: 8px;
+                      padding: 8px 14px; color: #e9edef; font-size: 14px; outline: none; }
+  .search-box input::placeholder { color: #8696a0; }
+  .chat-list { flex: 1; overflow-y: auto; }
+  .chat-item { padding: 14px 16px; cursor: pointer; border-bottom: 1px solid #1f2c34;
+               display: flex; align-items: center; gap: 12px; transition: background .15s; }
+  .chat-item:hover, .chat-item.active { background: #2a3942; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; background: #00a884;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 18px; font-weight: 600; flex-shrink: 0; color: #fff; }
+  .chat-info { flex: 1; min-width: 0; }
+  .chat-name { font-size: 15px; font-weight: 500; white-space: nowrap;
+               overflow: hidden; text-overflow: ellipsis; }
+  .chat-preview { font-size: 12px; color: #8696a0; white-space: nowrap;
+                  overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+  /* ── Main ── */
+  .main { flex: 1; display: flex; flex-direction: column; background: #0d1117; min-width: 0; }
+  .main-header { background: #1f2c34; padding: 12px 20px; border-bottom: 1px solid #2a3942;
+                 display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  .main-title { font-size: 16px; font-weight: 500; }
+  .messages-wrap { flex: 1; overflow-y: auto; padding: 16px;
+                   display: flex; flex-direction: column; gap: 4px; }
+
+  /* ── Messages ── */
+  .msg { max-width: 68%; padding: 8px 12px; border-radius: 8px; font-size: 14px;
+         line-height: 1.5; word-break: break-word; }
+  .msg.me    { background: #005c4b; align-self: flex-end; border-radius: 8px 0 8px 8px; }
+  .msg.other { background: #202c33; align-self: flex-start; border-radius: 0 8px 8px 8px; }
+  .msg.deleted { opacity: .65; border: 1px dashed #ef4444; }
+  .msg-meta { font-size: 11px; color: #8696a0; margin-top: 5px; display: flex;
+              align-items: center; gap: 5px; justify-content: flex-end; flex-wrap: wrap; }
+  .deleted-badge { background: #ef4444; color: #fff; font-size: 10px; font-weight: 600;
+                   padding: 2px 6px; border-radius: 99px; }
+  .sender-name { font-size: 11px; color: #00a884; font-weight: 600; margin-bottom: 3px; }
+  .msg-date-sep { text-align: center; margin: 12px 0; }
+  .msg-date-sep span { background: #1f2c34; color: #8696a0; font-size: 12px;
+                       padding: 4px 12px; border-radius: 99px; }
+
+  /* ── Ticks ── */
+  .tick { font-size: 13px; font-weight: 700; line-height: 1; flex-shrink: 0; }
+  .tick.sent      { color: #8696a0; }
+  .tick.delivered { color: #8696a0; }
+  .tick.read      { color: #53bdeb; }
+
+  /* ── Media ── */
+  .msg-media { margin-bottom: 6px; border-radius: 6px; overflow: hidden; }
+  .msg-media img   { display: block; max-width: 100%; max-height: 280px;
+                     object-fit: contain; cursor: pointer; border-radius: 6px; }
+  .msg-media video { display: block; max-width: 100%; max-height: 280px;
+                     border-radius: 6px; background: #000; }
+  .msg-media audio { width: 100%; }
+
+  /* ── Reply button on messages ── */
+  .msg-wrap { position: relative; display: flex; align-items: flex-start; gap: 6px; }
+  .msg-wrap.me    { flex-direction: row-reverse; align-self: flex-end; }
+  .msg-wrap.other { flex-direction: row;         align-self: flex-start; }
+  .msg-reply-btn  { opacity: 0; background: #2a3942; border: none; color: #8696a0;
+                    width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
+                    font-size: 14px; display: flex; align-items: center; justify-content: center;
+                    flex-shrink: 0; margin-top: 6px; transition: opacity .15s, color .15s; }
+  .msg-wrap:hover .msg-reply-btn { opacity: 1; }
+  .msg-reply-btn:hover { color: #00a884; }
+
+  /* ── Reply bar (input area) ── */
+  .reply-bar { background: #1f2c34; border-top: 1px solid #2a3942;
+               flex-shrink: 0; padding: 10px 14px; display: none; flex-direction: column; gap: 8px; }
+  .reply-bar.visible { display: flex; }
+  .reply-preview { background: #111b21; border-left: 3px solid #00a884;
+                   border-radius: 6px; padding: 8px 12px; display: flex;
+                   align-items: center; gap: 8px; }
+  .reply-preview-info { flex: 1; min-width: 0; }
+  .reply-preview-name { font-size: 11px; color: #00a884; font-weight: 600; margin-bottom: 2px; }
+  .reply-preview-text { font-size: 12px; color: #8696a0; white-space: nowrap;
+                        overflow: hidden; text-overflow: ellipsis; }
+  .reply-cancel { background: none; border: none; color: #8696a0; cursor: pointer;
+                  font-size: 18px; padding: 0 4px; line-height: 1; flex-shrink: 0; }
+  .reply-cancel:hover { color: #e9edef; }
+  .reply-input-row { display: flex; gap: 10px; align-items: center; }
+  .reply-input-row input { flex: 1; background: #2a3942; border: none; border-radius: 22px;
+                           padding: 10px 16px; color: #e9edef; font-size: 14px; outline: none; }
+  .reply-input-row input::placeholder { color: #8696a0; }
+  .reply-send-btn { background: #00a884; border: none; color: #fff; width: 40px; height: 40px;
+                    border-radius: 50%; cursor: pointer; font-size: 18px; display: flex;
+                    align-items: center; justify-content: center; flex-shrink: 0;
+                    transition: background .2s; }
+  .reply-send-btn:hover { background: #02c099; }
+
+  /* ── Lightbox ── */
+  .lightbox { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.9);
+              z-index: 500; align-items: center; justify-content: center; cursor: zoom-out; }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 90vw; max-height: 90vh; object-fit: contain;
+                  border-radius: 4px; cursor: default; }
+
+  /* ── Empty / QR ── */
+  .empty-state { flex: 1; display: flex; align-items: center; justify-content: center;
+                 color: #8696a0; font-size: 15px; flex-direction: column; gap: 10px; }
+  .empty-state .icon { font-size: 48px; }
+  .qr-screen { flex: 1; display: flex; align-items: center; justify-content: center;
+               flex-direction: column; gap: 20px; }
+  .qr-screen h2 { color: #e9edef; font-size: 22px; }
+  .qr-screen p  { color: #8696a0; text-align: center; max-width: 340px; line-height: 1.6; }
+  .qr-img { background: #fff; padding: 16px; border-radius: 12px; }
+  .qr-img img { display: block; width: 240px; height: 240px; }
+  .spin { animation: spin 1s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Deleted Panel ── */
+  #deleted-panel { flex: 1; overflow-y: auto; padding: 16px;
+                   display: flex; flex-direction: column; gap: 8px; }
+  .deleted-card { background: #1f2c34; border-radius: 8px; padding: 12px 16px;
+                  border-left: 3px solid #ef4444; }
+  .deleted-card .dc-from { font-size: 12px; color: #00a884; font-weight: 600; margin-bottom: 4px; }
+  .deleted-card .dc-chat { font-size: 11px; color: #8696a0; margin-bottom: 6px; }
+  .deleted-card .dc-media img { max-width: 180px; max-height: 140px; border-radius: 6px;
+                                  cursor: pointer; object-fit: cover; margin-bottom: 6px; }
+  .deleted-card .dc-body { font-size: 14px; color: #e9edef; }
+  .deleted-card .dc-time { font-size: 11px; color: #8696a0; margin-top: 6px; }
+
+  /* ── Settings Panel ── */
+  .settings-overlay { display: none; position: fixed; inset: 0;
+                       background: rgba(0,0,0,.55); z-index: 200; }
+  .settings-overlay.open { display: block; }
+  .settings-panel { display: none; position: fixed; top: 0; right: 0; bottom: 0; width: 360px;
+                    background: #111b21; z-index: 201; flex-direction: column;
+                    box-shadow: -6px 0 24px rgba(0,0,0,.6); }
+  .settings-panel.open { display: flex; }
+  .sp-header { background: #1f2c34; padding: 16px 20px; display: flex;
+               align-items: center; justify-content: space-between;
+               border-bottom: 1px solid #2a3942; flex-shrink: 0; }
+  .sp-header h3 { font-size: 16px; color: #e9edef; }
+  .sp-close { background: none; border: none; color: #8696a0; font-size: 20px;
+              cursor: pointer; padding: 0 4px; line-height: 1; }
+  .sp-close:hover { color: #e9edef; }
+  .sp-body { flex: 1; overflow-y: auto; padding: 8px 0; }
+  .sp-section { padding: 16px 20px 8px; font-size: 11px; font-weight: 700;
+                color: #00a884; text-transform: uppercase; letter-spacing: .8px; }
+  .sp-item { padding: 14px 20px; display: flex; align-items: flex-start;
+             gap: 16px; border-bottom: 1px solid #1f2c34; }
+  .sp-item:hover { background: #1a2530; }
+  .sp-info { flex: 1; }
+  .sp-name { font-size: 14px; color: #e9edef; margin-bottom: 3px; }
+  .sp-desc { font-size: 12px; color: #8696a0; line-height: 1.4; }
+  .sp-note { font-size: 11px; color: #f59e0b; margin-top: 3px; }
+
+  /* Toggle switch */
+  .toggle { position: relative; display: inline-block; width: 46px; height: 26px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle-track { position: absolute; cursor: pointer; inset: 0; background: #2a3942;
+                  border-radius: 26px; transition: .25s; }
+  .toggle-track::before { content: ''; position: absolute; width: 20px; height: 20px;
+                           left: 3px; top: 3px; background: #8696a0; border-radius: 50%;
+                           transition: .25s; }
+  .toggle input:checked + .toggle-track { background: #00a884; }
+  .toggle input:checked + .toggle-track::before { background: #fff; transform: translateX(20px); }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a3942; border-radius: 99px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>📱 WhatsApp Monitor</h1>
+  <div class="header-right">
+    <span class="status-dot" id="dot"></span>
+    <span class="status-text" id="status-text">Connecting…</span>
+    <span class="ghost-badge" id="ghost-badge">👻 Ghost</span>
+    <button class="btn-settings" onclick="openSettings()">⚙️ Settings</button>
+  </div>
+</div>
+
+<div class="layout" id="app-layout" style="display:none">
+  <div class="sidebar">
+    <div class="sidebar-tabs">
+      <button class="tab-btn active" onclick="switchTab('chats')">Chats</button>
+      <button class="tab-btn" onclick="switchTab('deleted')">Deleted
+        <span id="del-count" style="background:#ef4444;color:#fff;border-radius:99px;padding:1px 6px;font-size:10px;margin-left:4px"></span>
+      </button>
+    </div>
+    <div class="search-box">
+      <input type="text" id="search-input" placeholder="Search messages…" oninput="handleSearch(this.value)">
+    </div>
+    <div class="chat-list" id="chat-list"></div>
+  </div>
+
+  <div class="main" id="main-panel">
+    <div class="empty-state" id="empty-state">
+      <div class="icon">💬</div>
+      <div>Select a chat to view messages</div>
+    </div>
+    <div class="main-header" id="main-header" style="display:none">
+      <div class="avatar" id="main-avatar">?</div>
+      <div class="main-title" id="main-title"></div>
+    </div>
+    <div class="messages-wrap" id="messages-wrap" style="display:none"></div>
+
+    <!-- Reply / Send bar -->
+    <div class="reply-bar" id="reply-bar">
+      <div id="reply-preview" style="display:none" class="reply-preview">
+        <div class="reply-preview-info">
+          <div class="reply-preview-name" id="reply-preview-name"></div>
+          <div class="reply-preview-text" id="reply-preview-text"></div>
+        </div>
+        <button class="reply-cancel" onclick="clearReply()">✕</button>
+      </div>
+      <div class="reply-input-row">
+        <input type="text" id="msg-input" placeholder="Type a message…"
+               onkeydown="handleMsgKey(event)" autocomplete="off">
+        <button class="reply-send-btn" onclick="sendMsg()" title="Send">➤</button>
+      </div>
+    </div>
+
+    <div id="deleted-panel" style="display:none"></div>
+  </div>
+</div>
+
+<div class="qr-screen" id="qr-screen" style="display:none">
+  <h2>Scan QR Code</h2>
+  <div class="qr-img" id="qr-container">
+    <div style="width:240px;height:240px;display:flex;align-items:center;justify-content:center;color:#333;font-size:40px">
+      <span class="spin">⟳</span>
+    </div>
+  </div>
+  <p>Open WhatsApp → Settings → Linked Devices → Link a Device, then scan this code</p>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="closeLightbox()">
+  <img id="lightbox-img" src="" alt="">
+</div>
+
+<!-- Settings Overlay + Panel -->
+<div class="settings-overlay" id="settings-overlay" onclick="closeSettings()"></div>
+<div class="settings-panel" id="settings-panel">
+  <div class="sp-header">
+    <h3>⚙️ Settings</h3>
+    <button class="sp-close" onclick="closeSettings()">✕</button>
+  </div>
+  <div class="sp-body">
+
+    <div class="sp-section">Privacy</div>
+
+    <div class="sp-item">
+      <div class="sp-info">
+        <div class="sp-name">Hide Blue Ticks</div>
+        <div class="sp-desc">Don't send read receipts — sender won't know you've read their message</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="s-hide_read_receipts" onchange="saveSetting('hide_read_receipts', this.checked)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <div class="sp-item">
+      <div class="sp-info">
+        <div class="sp-name">Hide Grey Double Tick</div>
+        <div class="sp-desc">Don't show delivery confirmation in this monitor's view</div>
+        <div class="sp-note">⚠️ WhatsApp delivers receipts at protocol level — sender will still see ✓✓</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="s-hide_delivery_ticks" onchange="saveSetting('hide_delivery_ticks', this.checked)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <div class="sp-item">
+      <div class="sp-info">
+        <div class="sp-name">Hide Online Status</div>
+        <div class="sp-desc">Appear offline to everyone even while connected</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="s-hide_online" onchange="saveSetting('hide_online', this.checked)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <div class="sp-item">
+      <div class="sp-info">
+        <div class="sp-name">Hide Typing &amp; Recording</div>
+        <div class="sp-desc">Never show typing or voice recording indicator to others</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="s-hide_typing" onchange="saveSetting('hide_typing', this.checked)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <div class="sp-section">Messages</div>
+
+    <div class="sp-item">
+      <div class="sp-info">
+        <div class="sp-name">Anti-Delete</div>
+        <div class="sp-desc">Preserve messages deleted by others — keep them visible with a DELETED badge</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="s-anti_delete" onchange="saveSetting('anti_delete', this.checked)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <div class="sp-section">Notifications</div>
+
+    <div class="sp-item">
+      <div class="sp-info">
+        <div class="sp-name">New Message Alerts</div>
+        <div class="sp-desc">Show browser notification when a new message arrives</div>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="s-new_msg_alerts" onchange="saveSetting('new_msg_alerts', this.checked)">
+        <span class="toggle-track"></span>
+      </label>
+    </div>
+
+    <div class="sp-section">Account</div>
+
+    <div class="sp-item" style="flex-direction:column;align-items:stretch;gap:8px">
+      <div class="sp-info">
+        <div class="sp-name">Logout from WhatsApp</div>
+        <div class="sp-desc">Disconnect this linked device. You will need to scan the QR code again to reconnect.</div>
+      </div>
+      <button onclick="doLogout()"
+        style="margin-top:4px;padding:10px 16px;background:#ef4444;color:#fff;border:none;
+               border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;
+               transition:background .2s;width:100%"
+        onmouseover="this.style.background='#dc2626'"
+        onmouseout="this.style.background='#ef4444'">
+        🚪 Logout
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+let activeTab    = 'chats'
+let activeJid    = null
+let allChats     = []
+let allDeleted   = []
+let appSettings  = {}
+let lastSeenMsgAt = {}   // jid → last_msg_at seen, for new-message detection
+
+// ── Timestamps ────────────────────────────────────────────────────────────────
+function tsFull(unix) {
+  if (!unix) return ''
+  const d   = new Date(unix * 1000)
+  const now = new Date()
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return d.toDateString() === now.toDateString() ? time : d.toLocaleDateString() + ' ' + time
+}
+function tsShort(unix) {
+  if (!unix) return ''
+  const d   = new Date(unix * 1000)
+  const now = new Date()
+  return d.toDateString() === now.toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString()
+}
+function tsLong(unix) {
+  if (!unix) return ''
+  return new Date(unix * 1000).toLocaleString([], {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  })
+}
+
+// ── Avatars ───────────────────────────────────────────────────────────────────
+function avatarLetter(name) { return (name || '?').charAt(0).toUpperCase() }
+function avatarColor(name) {
+  const colors = ['#25d366','#128c7e','#075e54','#34b7f1','#9c27b0','#e91e63','#ff5722','#ff9800']
+  let h = 0
+  for (const c of (name || '')) h = (h * 31 + c.charCodeAt(0)) & 0xffffffff
+  return colors[Math.abs(h) % colors.length]
+}
+
+// ── Ticks ─────────────────────────────────────────────────────────────────────
+function buildTick(status) {
+  if (appSettings.hide_delivery_ticks === 'true' && status === 'delivered') return ''
+  if (status === 'read')      return `<span class="tick read"      title="Seen at ${new Date().toLocaleTimeString()}">✓✓</span>`
+  if (status === 'delivered') return `<span class="tick delivered" title="Delivered">✓✓</span>`
+  return `<span class="tick sent" title="Sent">✓</span>`
+}
+
+// ── Media ─────────────────────────────────────────────────────────────────────
+function buildMedia(url) {
+  if (!url) return ''
+  const ext = url.split('.').pop().toLowerCase()
+  if (['jpg','jpeg','png','webp','gif'].includes(ext))
+    return `<div class="msg-media"><img src="${url}" loading="lazy" onclick="openLightbox('${url}')"></div>`
+  if (['mp4','mov','webm'].includes(ext))
+    return `<div class="msg-media"><video src="${url}" controls preload="metadata"></video></div>`
+  if (['ogg','mp3','m4a'].includes(ext))
+    return `<div class="msg-media"><audio src="${url}" controls></audio></div>`
+  return `<div class="msg-media"><a href="${url}" target="_blank" style="color:#00a884">📎 Attachment</a></div>`
+}
+
+// ── Lightbox ──────────────────────────────────────────────────────────────────
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src
+  document.getElementById('lightbox').classList.add('open')
+}
+function closeLightbox() { document.getElementById('lightbox').classList.remove('open') }
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+async function loadSettings() {
+  appSettings = await fetch('/api/settings').then(r => r.json())
+  for (const [k, v] of Object.entries(appSettings)) {
+    const el = document.getElementById(`s-${k}`)
+    if (el) el.checked = (v === 'true' || v === true)
+  }
+  updateGhostBadge()
+}
+
+async function saveSetting(key, value) {
+  appSettings[key] = String(value)
+  await fetch('/api/settings', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ [key]: String(value) }),
+  })
+  updateGhostBadge()
+  if (key === 'new_msg_alerts' && value) requestNotifPermission()
+}
+
+function updateGhostBadge() {
+  const active = appSettings.hide_online === 'true'
+              || appSettings.hide_read_receipts === 'true'
+              || appSettings.hide_typing === 'true'
+  document.getElementById('ghost-badge').style.display = active ? '' : 'none'
+}
+
+function openSettings()  {
+  document.getElementById('settings-overlay').classList.add('open')
+  document.getElementById('settings-panel').classList.add('open')
+}
+function closeSettings() {
+  document.getElementById('settings-overlay').classList.remove('open')
+  document.getElementById('settings-panel').classList.remove('open')
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+// ── Reply & Send ──────────────────────────────────────────────────────────────
+let replyTo = null   // { id, content, sender }
+
+function startReply(id, content, sender) {
+  replyTo = { id, content, sender }
+  const preview = document.getElementById('reply-preview')
+  preview.style.display = 'flex'
+  document.getElementById('reply-preview-name').textContent = sender || 'Message'
+  document.getElementById('reply-preview-text').textContent = content
+  document.getElementById('msg-input').focus()
+}
+
+function clearReply() {
+  replyTo = null
+  document.getElementById('reply-preview').style.display = 'none'
+  document.getElementById('reply-preview-name').textContent = ''
+  document.getElementById('reply-preview-text').textContent = ''
+}
+
+async function sendMsg() {
+  const input = document.getElementById('msg-input')
+  const text  = input.value.trim()
+  if (!text || !activeJid) return
+
+  const btn = document.querySelector('.reply-send-btn')
+  btn.disabled  = true
+  btn.textContent = '…'
+
+  try {
+    const body = { jid: activeJid, text }
+    if (replyTo) body.quotedId = replyTo.id
+    const r = await fetch('/api/send', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    })
+    if (!r.ok) {
+      const err = await r.json()
+      alert('Send failed: ' + err.error)
+      return
+    }
+    input.value = ''
+    clearReply()
+    // Message is stored before the API responds, refresh immediately
+    openChat(activeJid, document.getElementById('main-title').textContent)
+  } catch (e) {
+    alert('Send failed: ' + e.message)
+  } finally {
+    btn.disabled    = false
+    btn.textContent = '➤'
+  }
+}
+
+function handleMsgKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg() }
+}
+
+async function doLogout() {
+  if (!confirm('Disconnect from WhatsApp? You will need to scan QR again to reconnect.')) return
+  await fetch('/api/logout', { method: 'POST' })
+  closeSettings()
+  activeJid   = null
+  allChats    = []
+  allDeleted  = []
+  document.getElementById('app-layout').style.display = 'none'
+  document.getElementById('qr-screen').style.display  = 'none'
+  document.getElementById('dot').className = 'status-dot'
+  document.getElementById('status-text').textContent  = 'Logged out…'
+}
+
+async function requestNotifPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission()
+  }
+}
+
+function maybeNotify(chat) {
+  if (appSettings.new_msg_alerts !== 'true') return
+  if (!('Notification' in window) || Notification.permission !== 'granted') return
+  if (chat.last_msg_at && (lastSeenMsgAt[chat.jid] || 0) < chat.last_msg_at) {
+    const name = chat.name || chat.jid.split('@')[0]
+    new Notification(`💬 ${name}`, {
+      body: chat.last_msg || 'New message',
+      tag:  chat.jid,
+    })
+  }
+}
+
+// ── Poll Status & QR ──────────────────────────────────────────────────────────
+let firstLoad = true
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status').then(r => r.json())
+    const dot  = document.getElementById('dot')
+    const text = document.getElementById('status-text')
+    if (r.connected) {
+      dot.className    = 'status-dot connected'
+      text.textContent = 'Connected'
+      document.getElementById('qr-screen').style.display  = 'none'
+      document.getElementById('app-layout').style.display = 'flex'
+      await loadChats()
+      loadDeleted()
+      if (firstLoad) { loadSettings(); firstLoad = false }
+    } else if (r.qr) {
+      dot.className    = 'status-dot'
+      text.textContent = 'Scan QR'
+      document.getElementById('app-layout').style.display = 'none'
+      document.getElementById('qr-screen').style.display  = 'flex'
+      document.getElementById('qr-container').innerHTML = `<img src="${r.qr}" alt="QR Code">`
+    } else {
+      dot.className    = 'status-dot'
+      text.textContent = 'Connecting…'
+      document.getElementById('qr-screen').style.display  = 'none'
+      document.getElementById('app-layout').style.display = 'none'
+    }
+  } catch(e) {}
+}
+setInterval(pollStatus, 2000)
+pollStatus()
+
+// ── Chats ─────────────────────────────────────────────────────────────────────
+async function loadChats() {
+  const fresh = await fetch('/api/chats').then(r => r.json())
+  // Detect new messages for notifications
+  for (const chat of fresh) {
+    if (!firstLoad) maybeNotify(chat)
+    lastSeenMsgAt[chat.jid] = chat.last_msg_at
+  }
+  allChats = fresh
+  renderChatList(allChats)
+}
+
+function renderChatList(chats) {
+  const el = document.getElementById('chat-list')
+  if (!chats.length) {
+    el.innerHTML = '<div style="padding:20px;color:#8696a0;font-size:13px;text-align:center">No chats yet</div>'
+    return
+  }
+  el.innerHTML = chats.map(c => `
+    <div class="chat-item ${activeJid===c.jid?'active':''}"
+         onclick="openChat('${c.jid}','${(c.name||'').replace(/'/g,"\\'")}')">
+      <div class="avatar" style="background:${avatarColor(c.name)}">${avatarLetter(c.name)}</div>
+      <div class="chat-info">
+        <div class="chat-name">${c.name || c.jid.split('@')[0]}</div>
+        <div class="chat-preview">${c.last_msg || ''}</div>
+      </div>
+      <div style="font-size:11px;color:#8696a0;flex-shrink:0">${tsShort(c.last_msg_at)}</div>
+    </div>
+  `).join('')
+}
+
+// ── Open Chat ─────────────────────────────────────────────────────────────────
+async function openChat(jid, name) {
+  activeJid = jid
+  document.getElementById('empty-state').style.display   = 'none'
+  document.getElementById('main-header').style.display   = 'flex'
+  document.getElementById('messages-wrap').style.display = 'flex'
+  document.getElementById('deleted-panel').style.display = 'none'
+  document.getElementById('reply-bar').classList.add('visible')
+  document.getElementById('main-avatar').textContent     = avatarLetter(name)
+  document.getElementById('main-avatar').style.background = avatarColor(name)
+  document.getElementById('main-title').textContent      = name || jid.split('@')[0]
+  renderChatList(allChats)
+
+  const msgs = await fetch(`/api/messages/${encodeURIComponent(jid)}`).then(r => r.json())
+  const wrap = document.getElementById('messages-wrap')
+  if (!msgs.length) {
+    wrap.innerHTML = '<div class="empty-state" style="flex:1"><div class="icon">🕐</div><div>No messages stored yet</div></div>'
+    return
+  }
+
+  const sorted = [...msgs].reverse()
+  let lastDate = ''
+  wrap.innerHTML = sorted.map(m => {
+    const d = new Date(m.timestamp * 1000).toDateString()
+    let sep = ''
+    if (d !== lastDate) {
+      sep = `<div class="msg-date-sep"><span>${d}</span></div>`
+      lastDate = d
+    }
+    const isMe = m.is_from_me
+    const safeContent = (m.content || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\n/g,' ')
+    const safeSender  = (m.sender_name || m.from_jid || '').replace(/\\/g,'\\\\').replace(/'/g,"\\'")
+    return `${sep}
+      <div class="msg-wrap ${isMe?'me':'other'}">
+        <button class="msg-reply-btn" title="Reply"
+                onclick="startReply('${m.id}','${safeContent}','${safeSender}')">↩</button>
+        <div class="msg ${isMe?'me':'other'} ${m.is_deleted?'deleted':''}">
+          ${!isMe ? `<div class="sender-name">${m.sender_name || m.from_jid || ''}</div>` : ''}
+          ${buildMedia(m.media_url)}
+          <div>${m.content || '<i style="color:#8696a0">Empty</i>'}</div>
+          <div class="msg-meta">
+            ${m.is_deleted ? `<span class="deleted-badge">DELETED</span>` : ''}
+            <span title="${tsLong(m.timestamp)}">${tsFull(m.timestamp)}</span>
+            ${isMe ? buildTick(m.receipt_status || 'sent') : ''}
+          </div>
+        </div>
+      </div>`
+  }).join('')
+  wrap.scrollTop = wrap.scrollHeight
+}
+
+// ── Deleted Tab ───────────────────────────────────────────────────────────────
+async function loadDeleted() {
+  allDeleted = await fetch('/api/deleted').then(r => r.json())
+  document.getElementById('del-count').textContent = allDeleted.length || ''
+}
+function renderDeletedPanel() {
+  const el = document.getElementById('deleted-panel')
+  if (!allDeleted.length) {
+    el.innerHTML = '<div class="empty-state" style="flex:1"><div class="icon">🗑️</div><div>No deleted messages recovered yet</div></div>'
+    return
+  }
+  el.innerHTML = allDeleted.map(m => `
+    <div class="deleted-card">
+      <div class="dc-from">${m.sender_name || m.from_jid || 'Unknown'}</div>
+      <div class="dc-chat">Chat: ${m.jid.split('@')[0]}</div>
+      ${m.media_url ? `<div class="dc-media">${buildMedia(m.media_url)}</div>` : ''}
+      <div class="dc-body">${m.content || '<i>No text</i>'}</div>
+      <div class="dc-time">Sent: ${tsLong(m.timestamp)} &nbsp;|&nbsp; Deleted: ${tsLong(m.deleted_at)}</div>
+    </div>
+  `).join('')
+}
+
+// ── Tab Switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  activeTab = tab
+  document.querySelectorAll('.tab-btn').forEach((b, i) =>
+    b.classList.toggle('active', (i===0&&tab==='chats')||(i===1&&tab==='deleted')))
+  const chatList  = document.getElementById('chat-list')
+  const searchBox = document.querySelector('.search-box')
+  if (tab === 'chats') {
+    chatList.style.display   = ''
+    searchBox.style.display  = ''
+    document.getElementById('empty-state').style.display   = activeJid ? 'none' : 'flex'
+    document.getElementById('main-header').style.display   = activeJid ? 'flex' : 'none'
+    document.getElementById('messages-wrap').style.display = activeJid ? 'flex' : 'none'
+    document.getElementById('reply-bar').classList.toggle('visible', !!activeJid)
+    document.getElementById('deleted-panel').style.display = 'none'
+  } else {
+    chatList.style.display   = 'none'
+    searchBox.style.display  = 'none'
+    document.getElementById('empty-state').style.display   = 'none'
+    document.getElementById('main-header').style.display   = 'flex'
+    document.getElementById('messages-wrap').style.display = 'none'
+    document.getElementById('reply-bar').classList.remove('visible')
+    document.getElementById('deleted-panel').style.display = 'flex'
+    document.getElementById('main-avatar').textContent     = '🗑'
+    document.getElementById('main-avatar').style.background = '#ef4444'
+    document.getElementById('main-title').textContent      = 'Deleted Messages (Recovered)'
+    loadDeleted().then(renderDeletedPanel)
+  }
+}
+
+// ── Search ────────────────────────────────────────────────────────────────────
+let searchTimer = null
+async function handleSearch(q) {
+  clearTimeout(searchTimer)
+  if (!q) { renderChatList(allChats); return }
+  searchTimer = setTimeout(async () => {
+    const results = await fetch(`/api/search?q=${encodeURIComponent(q)}`).then(r => r.json())
+    const el = document.getElementById('chat-list')
+    if (!results.length) {
+      el.innerHTML = '<div style="padding:20px;color:#8696a0;font-size:13px;text-align:center">No results</div>'
+      return
+    }
+    el.innerHTML = results.map(m => `
+      <div class="chat-item" onclick="openChat('${m.jid}','${m.jid.split('@')[0]}')">
+        <div class="avatar" style="background:${avatarColor(m.sender_name)}">${avatarLetter(m.sender_name)}</div>
+        <div class="chat-info">
+          <div class="chat-name">${m.sender_name || m.jid.split('@')[0]}</div>
+          <div class="chat-preview">${m.content || ''}</div>
+        </div>
+        <div style="font-size:11px;color:#8696a0;flex-shrink:0">${tsShort(m.timestamp)}</div>
+      </div>
+    `).join('')
+  }, 300)
+}
+</script>
+</body>
+</html>
